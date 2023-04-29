@@ -1,0 +1,402 @@
+---
+title: "COVID19_steps.Rmd"
+author: "T. S"
+date: '2022-06-18'
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## Import Data
+
+The data used in this analysis is from hn hopkins university, the data is  github and the below link in url_in contains + filename contains the four cvs data needed for this analyis
+
+```{r get_jhu_data}
+##Get current Data in the four files
+#they all begin the same way
+###call the tidyverse library
+library("tidyverse")
+url_in<-"https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/"
+file_names<-
+  c("time_series_covid19_confirmed_global.csv",
+              "time_series_covid19_deaths_global.csv",
+              "time_series_covid19_confirmed_US.csv",
+              "time_series_covid19_deaths_US.csv")
+urls<-str_c(url_in, file_names)
+```
+Let's read in the data and see what we have.
+
+```{r import_data, message=FALSE}
+global_cases <- read_csv(urls[1])
+global_deaths <- read_csv(urls[2])
+US_cases <- read_csv(urls[3])
+US_deaths <- read_csv(urls[4])
+
+```
+
+##Tidy Data
+
+I'm going to get rid of the Lat and Long because I don't need that for the analysis I'm going to be planning. And also, I want the country/region and province/state to be a little more r friendly, I also want to make this what I call tidy, which means what I really would like is to have each date on a separate row. Because what I'm looking at in this case, is the total cases. But it's the cases per each date. So I'm going to fix all of that.
+
+I'm going to take what I had, its global cases and I'm going to pivot longer, which means I'm going to make each one into a row. Everything except the province/state, the country/region, the Lat/Long. The names was the column headings are now going to be date, and the values will go to cases. And then I will select everything except the Lat and Long, and I will see then what my result is. So now let's look at what global cases looks like.
+
+```{r pivot data 1}
+#ctlr+alt+I cmd to insert chunk
+global_cases<-global_cases %>%
+  pivot_longer(cols = -c('Province/State','Country/Region', Lat, Long),
+               names_to="date",
+               values_to="cases")%>%
+  select(-c(Lat,Long))
+
+```
+We are going to tidy others Global_death, US_cases and US_deaths
+
+## Pivot date and delete Lat, Long
+
+```{r pivot date}
+#ctlr+alt+I cmd to insert chunk
+global_deaths<-global_deaths %>%
+  pivot_longer(cols = -c('Province/State','Country/Region', Lat, Long),
+               names_to="date",
+               values_to="deaths")%>%
+  select(-c(Lat,Long))
+
+```
+We will combine the cases and deaths per date into one variable we will call global. So what we will do is we will join the cases with the deaths and then we will rename our country region, just to get rid of this slash mark and the same with province state. We'll also notice that our date was not a date objects we will make it a date object.
+
+## Combine Cases and deaths to global and change format of date
+
+```{r Full join}
+library("lubridate")
+global<-global_cases %>%
+  full_join(global_deaths) %>%
+  rename(Country_Region = 'Country/Region',
+        Province_State = 'Province/State') %>%
+  mutate(date=mdy(date))
+Joining_by =c("Province/State", "Country/Region", "date")
+
+```
+
+```{r}
+global
+summary(global)
+```
+ I think I have a lot of case of rows that have no cases at all. So I think I would like to get rid of those. So I think what I will do is I will filter out and keep only where the cases are positive
+
+## Delete row with 0 case 
+ 
+```{r filter case greather than 0}
+global<-global %>% filter(cases>=1)
+summary(global)
+```
+ Now we need to verified that the maximum cases that we have in the summary is correct
+```{r filter case greather than max}
+global1<-global %>% filter(cases>103000000)
+global1
+```
+
+
+Now let check what is in US_cases and do the same Tidy process and we did with global_cases
+I have these weird codes, UID, iso2, iso3, code3, FIPS, Admin2, province_state, country region, Lat, Long. So there's some things in there that I don't need. So what I'm going to start with is, I know I want to pivot all these data. And I think I'm going to keep Admin2 through the number of cases once I get that done
+## Tidy US_Cases
+Let check which variables we got in US_Cases
+
+```{r US cases}
+US_cases
+
+```
+
+```{r Pivot US Cases}
+US_cases<- US_cases %>%
+  pivot_longer(cols=-(UID:Combined_Key),
+               names_to ="date",
+               values_to="cases")%>%
+  select(Admin2:cases)%>% 
+  mutate(date = mdy(date)) %>%
+  select(-c(Lat, Long_))
+US_cases
+```
+Combined_key puts together the county and the state and then I have the date and the number of cases.
+
+
+```{r}
+US_deaths<- US_deaths %>%
+  pivot_longer(cols=-(UID:Population),
+               names_to ="date",
+               values_to="deaths")%>%
+  select(Admin2:deaths)%>% 
+  mutate(date = mdy(date)) %>%
+  select(-c(Lat, Long_))
+US_deaths
+```
+
+
+I'm going to join it by province_state and country_region. And then I'm going to select everything except for those columns and then I will select these columns from it. And when I do that and look at global, now I see that for each country I have added the population to that data set.
+
+```{r}
+US<- US_cases %>% full_join(US_deaths)
+Joining_by =c("Admin2", "Province/State", "Country/Region", "Combined_Key", "date")
+US
+```
+
+Now we notice we don't have population data for the world data. And if we're going to do comparative analysis between the countries, we will want to add the population data to our global data set.
+
+So let's add a population data and a variable called Combined_key, that combines these two things the province_state in the country_region together, so that I'll have a similar sort of data set. So first, let me combine.
+
+
+I'm going to do a Combined_keys, I'm going to use unite, which will combine together province_state, country_region. It will combine it with a comma and a space and put it in Combined_key in the global data set.
+
+```{r combine}
+global<- global %>%
+  unite("Combined_Key", 
+        c(Province_State, Country_Region),
+        sep = ", ",
+        na.rm = TRUE,
+        remove = FALSE)
+
+```
+
+
+
+ So now if I look at my global data set, it should have the same variables other than population. 
+
+```{r check global}
+global
+```
+
+
+So now I need to add population and so I find that same Johns Hopkins website has a CSV. I'm going to put that in a url.
+
+# Get global population data from the links below
+
+```{r get population}
+
+uid_lookup_url <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/UID_ISO_FIPS_LookUp_Table.csv"
+
+uid <- read_csv(uid_lookup_url) %>%
+  select(-c(Lat, Long_, Combined_Key, code3, iso2, iso3, Admin2))
+```
+
+Now we need to join uid with the global dataset by province_state and Country_Region so we can have global with population
+
+
+```{r join global and uid}
+global <- global %>%
+  left_join(uid, by = c("Province_State", "Country_Region"))%>%
+  select(-c(UID, FIPS)) %>%
+  select(Province_State, Country_Region, date, 
+         cases, deaths, Population, Combined_Key)
+
+global
+
+```
+
+# Visualizing, Analysing, and Modeling Data
+
+```{r visualise state of US}
+options(dplyr.summarise.inform = FALSE)
+
+US_by_state <- US %>%
+  group_by(Province_State, Country_Region, date) %>%
+  summarize(cases = sum(cases), deaths = sum(deaths),
+            Population = sum(Population))%>%
+  mutate(deaths_per_mill = deaths *1000000/Population) %>%
+  select(Province_State, Country_Region, date,
+         cases, deaths, deaths_per_mill, Population) %>%
+  ungroup()
+
+US_by_state
+
+```
+
+```{r group US cases by date}
+US_totals <- US %>%
+  group_by(Country_Region, date) %>%
+  summarize(cases = sum(cases), deaths = sum(deaths),
+            Population = sum(Population))%>%
+  mutate(deaths_per_mill = deaths *1000000/Population) %>%
+  select(Country_Region, date,
+         cases, deaths, deaths_per_mill, Population) %>%
+  ungroup()
+
+US_totals
+tail(US_totals)
+```
+
+# Let Visualze US_total
+
+```{r Plot US Total}
+US_totals %>%
+  filter(cases > 0) %>%
+  ggplot(aes(x = date, y = cases))+
+  geom_line(aes(color="cases"))+
+  geom_point(aes(color="cases"))+
+  geom_line(aes(y = deaths, color = "deaths"))+
+  geom_point(aes(y = deaths, color = "deaths"))+
+  scale_y_log10()+
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 90))+
+  labs(tittle = "COVID19 in US", y= NULL)
+  
+
+```
+# New york case
+
+```{r Plot New York}
+state <- "New York"
+US %>%
+ 
+  filter(Province_State == state) %>%
+  filter(cases > 0) %>%
+  ggplot(aes(x = date, y = cases))+
+  geom_line(aes(color="cases"))+
+  geom_point(aes(color="cases"))+
+  geom_line(aes(y = deaths, color = "deaths"))+
+  geom_point(aes(y = deaths, color = "deaths"))+
+  scale_y_log10()+
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 90))+
+  labs(tittle = "COVID19 in ", state, y= NULL)
+  
+
+```
+##Let check the maximum date and death of our data
+```{r}
+max(US_totals$date)
+max(US_totals$deaths)
+
+```
+
+Let now group our global data
+
+```{r}
+# let look at Global by country, so we will group the number by 'Province_State' followed by 'Country_Region' then 'date'
+global_by_country <- global %>%
+  group_by(Province_State, Country_Region, date) %>%
+  summarize(cases = sum(cases), deaths = sum(deaths), 
+            Population = sum(Population)) %>%
+  mutate(deaths_per_mill = deaths *1000000/Population) %>%
+  select(Province_State, Country_Region, date, cases, deaths, deaths_per_mill, Population) %>%
+  ungroup()
+global_by_country
+
+
+# First, we will group the data by the country followed by date. 
+global_totals <- global_by_country%>%
+  group_by(Country_Region, date) %>%
+  summarize(cases = sum(cases), deaths = sum(deaths), 
+            Population = sum(Population)) %>%
+  mutate(deaths_per_mill = deaths *1000000/Population) %>%
+  select(Country_Region, date, cases, deaths, deaths_per_mill, Population) %>%
+  ungroup()
+global_totals
+tail(global_totals)
+```
+
+
+```{r}
+# To visualize the global_totals and plot the graph between 'cases' and 'death'
+global_totals %>%
+  filter(cases > 0) %>%
+  ggplot(aes(x = date, y = cases)) +
+  geom_line(aes(color = "cases")) +
+  geom_point(aes(color = "cases")) +
+  geom_line(aes(y = deaths, color = "deaths")) +
+  scale_y_log10() + 
+  theme(legend.position="bottom",
+        axis.text.x = element_text(angle = 90)) +
+  labs(title = "Global COVID19", y = NULL)
+```
+# We can plot the graph for some country such as Italy and Canada
+```{r}
+country <- "Italy"
+global_by_country %>%
+  filter(Country_Region == country) %>%
+  filter(cases > 0) %>%
+  ggplot(aes(x = date, y = cases)) +
+  geom_line(aes(color = "cases")) +
+  geom_point(aes(color = "cases")) +
+  geom_line(aes(y = deaths, color = "deaths")) +
+  scale_y_log10() + 
+  theme(legend.position="bottom",
+        axis.text.x = element_text(angle = 90)) +
+  labs(title = "COVID19 in Italy", y = NULL)
+
+```
+
+```{r}
+country <- "Zimbabwe"
+global_by_country %>%
+  filter(Country_Region == country) %>%
+  filter(cases > 0) %>%
+  ggplot(aes(x = date, y = cases)) +
+  geom_line(aes(color = "cases")) +
+  geom_point(aes(color = "cases")) +
+  geom_line(aes(y = deaths, color = "deaths")) +
+  scale_y_log10() + 
+  theme(legend.position="bottom",
+        axis.text.x = element_text(angle = 90)) +
+  labs(title = "COVID19 in Zimbabwe", y = NULL)
+
+```
+
+```{r}
+# Now we want to analyze more to see where the min and max deaths occur
+global_country_totals <- global_by_country %>%
+  group_by(Country_Region) %>%
+  summarize(deaths = max(deaths), cases = max(cases),
+            population = max(Population),
+            cases_per_thou = 1000* cases/population,
+            deaths_per_thou = 1000* deaths/population) %>%
+  filter(cases > 0, population > 0)
+
+# Use the slice_min to show just the smallest for n = 10
+global_country_totals %>%
+  slice_min(deaths_per_thou, n = 10)%>%
+  select(deaths_per_thou, cases_per_thou, everything())
+
+# Use the slice_max to show just the largest for n = 10
+global_country_totals %>%
+  slice_max(deaths_per_thou, n = 10) %>%
+  select(deaths_per_thou, cases_per_thou, everything())
+```
+
+
+```{r modeling data}
+summary(global_by_country)
+# Population has 4897 rows of NA. We will just remove it since it is only 2% of the data.
+na = c(which(is.na(global_by_country$Population)))
+global_by_country_no_na = global_by_country[-na,]
+
+
+
+# Linear Model 
+lm_case_population = lm(deaths ~ cases + Population, global_by_country_no_na)
+summary(lm_case_population)
+
+lm_case = lm(deaths ~ cases, global_by_country_no_na)
+summary(lm_case)
+
+
+
+
+
+
+```
+## To conclude  
+1. We were able to visualize covid 19 cases and deaths for US then we also visialize the covid 19 cases and deadths worlwide
+
+## Bias Source  
+Bias can occured if the data collection was not and if people who died from other sickness was recorded as covid 19 death. Another source was bias is that developping country did not have covid test kit in the early stage of covid 19 that leaad to less record of covid cases. Even when the covid test kit was available on the developping country they was not as much as covid kit as in Country like united state so the number of person tested covid positives was lower than in non developping country. The last bias is that as many people in developping country did not under go covid 19 test while sick there death was not recorded as covid 19 death since most developping country does not have all the ressources required to conduct autposy.
+
+
+
+
+
+
+
